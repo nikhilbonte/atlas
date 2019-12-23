@@ -18,13 +18,18 @@
 
 package org.apache.atlas.query;
 
+import org.apache.atlas.query.SelectClauseMetadata.AggregatorFlag;
 import org.apache.atlas.query.antlr4.AtlasDSLParser.*;
 import org.apache.atlas.query.antlr4.AtlasDSLParserBaseVisitor;
+import org.apache.atlas.repository.graphdb.AtlasGraphTraversal;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
     private static final Logger LOG = LoggerFactory.getLogger(DSLVisitor.class);
@@ -32,72 +37,92 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
     private static final String AND = "AND";
     private static final String OR  = "OR";
 
-    private final GremlinQueryComposer gremlinQueryComposer;
+    private final GremlinQueryComposer     gremlinQueryComposer;
+    private final AtlasDSL.QueryMetadata   queryMetadata;
+    private       GroupByExpressionContext groupByExpressionContext;
 
-    public DSLVisitor(GremlinQueryComposer gremlinQueryComposer) {
+    public DSLVisitor(GremlinQueryComposer gremlinQueryComposer, AtlasDSL.QueryMetadata queryMetadata) {
         this.gremlinQueryComposer = gremlinQueryComposer;
+        this.queryMetadata = queryMetadata;
     }
 
-    @Override
     public Void visitLimitOffset(LimitOffsetContext ctx) {
         if (LOG.isDebugEnabled()) {
             LOG.debug("=> DSLVisitor.visitLimitOffset({})", ctx);
         }
 
-        gremlinQueryComposer.addLimit(ctx.limitClause().NUMBER().getText(),
-                                      (ctx.offsetClause() == null ? "0" : ctx.offsetClause().NUMBER().getText()));
+        LimitClauseContext  limitClause  = ctx.limitClause();
+        String              limit        = limitClause.NUMBER().getText();
+        OffsetClauseContext offsetClause = ctx.offsetClause();
+        String              offset       = offsetClause == null ? "0" : offsetClause.NUMBER().getText();
+
+        SelectClauseMetadata selectClauseMetadata = gremlinQueryComposer.getSelectClause();
+        // Limit offset shouldn't be applied when the select clause only has aggregators
+        if (selectClauseMetadata != null && selectClauseMetadata.onlyAggregators()) {
+            return null;
+        }
+
+        if (groupByExpressionContext != null) {
+            // For groupBy the result is a Map, offset and limit won't work, better to defer the paging to the projection util
+            gremlinQueryComposer.addLimit(limit, "0", true);
+        } else {
+            gremlinQueryComposer.addLimit(limit, offset, true);
+        }
+
         return super.visitLimitOffset(ctx);
     }
 
     @Override
-    public Void visitSelectExpr(SelectExprContext ctx) {
+    public Void visitSelectClause(final SelectClauseContext ctx) {
         if (LOG.isDebugEnabled()) {
-            LOG.debug("=> DSLVisitor.visitSelectExpr({})", ctx);
+            LOG.debug("==> DSLVisitor.visitSelectClause({})",ctx);
         }
 
         // Select can have only attributes, aliased attributes or aggregate functions
+        List<SelectExpressionContext> selectExpressionContexts = ctx.selectExpr().selectExpression();
+        SelectClauseMetadata          selectClauseMetadata     = new SelectClauseMetadata(selectExpressionContexts.size());
 
-        // Groupby attr also represent select expr, no processing is needed in that case
-        // visit groupBy would handle the select expr appropriately
-        if (!(ctx.getParent() instanceof GroupByExpressionContext)) {
-            String[] items  = new String[ctx.selectExpression().size()];
-            String[] labels = new String[ctx.selectExpression().size()];
 
-            SelectClauseComposer selectClauseComposer = new SelectClauseComposer();
-
-            for (int i = 0; i < ctx.selectExpression().size(); i++) {
-                SelectExpressionContext selectExpression = ctx.selectExpression(i);
+            for (int i = 0; i < selectExpressionContexts.size(); i++) {
+                SelectExpressionContext selectExpression = selectExpressionContexts.get(i);
                 CountClauseContext      countClause      = selectExpression.expr().compE().countClause();
                 SumClauseContext        sumClause        = selectExpression.expr().compE().sumClause();
                 MinClauseContext        minClause        = selectExpression.expr().compE().minClause();
                 MaxClauseContext        maxClause        = selectExpression.expr().compE().maxClause();
                 IdentifierContext       identifier       = selectExpression.identifier();
 
-                labels[i] = identifier != null ? identifier.getText() : selectExpression.getText();
+                selectClauseMetadata.setLabel(i,identifier != null ? identifier.getText() : selectExpression.getText());
 
                 if (Objects.nonNull(countClause)) {
-                    items[i] = "count";
-                    selectClauseComposer.setCountIdx(i);
+                    selectClauseMetadata.setItem(i,"count");
+                    selectClauseMetadata.setAggregatorFlag(i, AggregatorFlag.COUNT);
                 } else if (Objects.nonNull(sumClause)) {
-                    items[i] = sumClause.expr().getText();
-                    selectClauseComposer.setSumIdx(i);
+                    selectClauseMetadata.setItem(i, sumClause.expr().getText());
+                    selectClauseMetadata.setAggregatorFlag(i, AggregatorFlag.SUM);
                 } else if (Objects.nonNull(minClause)) {
-                    items[i] = minClause.expr().getText();
-                    selectClauseComposer.setMinIdx(i);
+                    selectClauseMetadata.setItem(i, minClause.expr().getText());
+                    selectClauseMetadata.setAggregatorFlag(i, AggregatorFlag.MIN);
                 } else if (Objects.nonNull(maxClause)) {
-                    items[i] = maxClause.expr().getText();
-                    selectClauseComposer.setMaxIdx(i);
+                    selectClauseMetadata.setItem(i, maxClause.expr().getText());
+                    selectClauseMetadata.setAggregatorFlag(i, AggregatorFlag.MAX);
                 } else {
-                    items[i] = selectExpression.expr().getText();
+                    selectClauseMetadata.setItem(i, selectExpression.expr().getText());
+                    selectClauseMetadata.setAggregatorFlag(i, AggregatorFlag.NONE);
                 }
             }
 
-            selectClauseComposer.setItems(items);
-            selectClauseComposer.setAttributes(items);
-            selectClauseComposer.setLabels(labels);
-            gremlinQueryComposer.addSelect(selectClauseComposer);
+        gremlinQueryComposer.addSelect(selectClauseMetadata);
+
+        // Only process groupBy expression if orderBy is not present, else defer until orderBy visit
+        if (!queryMetadata.hasOrderBy() && queryMetadata.hasGroupBy()) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Processing groupBy expression as well");
+            }
+            String s = groupByExpressionContext.selectExpr().getText();
+            gremlinQueryComposer.addGroupBy(s);
         }
-        return super.visitSelectExpr(ctx);
+
+        return super.visitSelectClause(ctx);
     }
 
     @Override
@@ -109,6 +134,15 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
         // Extract the attribute from parentheses
         String text = ctx.expr().getText().replace("(", "").replace(")", "");
         gremlinQueryComposer.addOrderBy(text, (ctx.sortOrder() != null && ctx.sortOrder().getText().equalsIgnoreCase("desc")));
+
+        if (queryMetadata.hasGroupBy()) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Processing groupBy expression as well");
+            }
+            String s = groupByExpressionContext.selectExpr().getText();
+            gremlinQueryComposer.addGroupBy(s);
+        }
+
         return super.visitOrderByExpr(ctx);
     }
 
@@ -117,6 +151,7 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
         if (LOG.isDebugEnabled()) {
             LOG.debug("=> DSLVisitor.visitWhereClause({})", ctx);
         }
+        LOG.info("=> DSLVisitor.visitWhereClause({})", ctx);
 
         ExprContext expr = ctx.expr();
         processExpr(expr, gremlinQueryComposer);
@@ -165,9 +200,17 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
             LOG.debug("=> DSLVisitor.visitGroupByExpression({})", ctx);
         }
 
-        String s = ctx.selectExpr().getText();
-        gremlinQueryComposer.addGroupBy(s);
-        return super.visitGroupByExpression(ctx);
+        groupByExpressionContext = ctx;
+        if (queryMetadata.hasOrderBy() || queryMetadata.hasSelect()) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Deferring groupBy processing, orderBy = {} and select = {}", queryMetadata.hasOrderBy(), queryMetadata.hasSelect());
+            }
+            return null;
+        } else {
+            String s = ctx.selectExpr().getText();
+            gremlinQueryComposer.addGroupBy(s);
+            return super.visitGroupByExpression(ctx);
+        }
     }
 
     private Void visitIsClause(GremlinQueryComposer gqc, IsClauseContext ctx) {
@@ -217,14 +260,13 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
 
     private void processExprRight(final ExprContext expr, GremlinQueryComposer gremlinQueryComposer) {
         GremlinQueryComposer nestedProcessor = gremlinQueryComposer.createNestedProcessor();
-
-        List<String> nestedQueries = new ArrayList<>();
-        String       prev          = null;
+        List<AtlasGraphTraversal> nestedTraversals = new ArrayList<>();
+        String                    prev             = null;
 
         // Process first expression then proceed with the others
         // expr -> compE exprRight*
         processExpr(expr.compE(), nestedProcessor);
-        nestedQueries.add(nestedProcessor.get());
+        nestedTraversals.add(nestedProcessor.getGraphTraversal());
 
         // Record all processed attributes
         gremlinQueryComposer.addProcessedAttributes(nestedProcessor.getAttributesProcessed());
@@ -238,9 +280,10 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
                 if (OR.equalsIgnoreCase(prev)) {
                     // Change of context
                     GremlinQueryComposer orClause = nestedProcessor.createNestedProcessor();
-                    orClause.addOrClauses(nestedQueries);
-                    nestedQueries.clear();
-                    nestedQueries.add(orClause.get());
+                    AtlasGraphTraversal  orTraversal = orClause.getGraphTraversal();
+                    orTraversal.or(nestedTraversals.toArray(new Traversal[0]));
+                    nestedTraversals.clear();
+                    nestedTraversals.add(orTraversal);
 
                     // Record all processed attributes
                     gremlinQueryComposer.addProcessedAttributes(orClause.getAttributesProcessed());
@@ -253,9 +296,10 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
                 if (AND.equalsIgnoreCase(prev)) {
                     // Change of context
                     GremlinQueryComposer andClause = nestedProcessor.createNestedProcessor();
-                    andClause.addAndClauses(nestedQueries);
-                    nestedQueries.clear();
-                    nestedQueries.add(andClause.get());
+                    AtlasGraphTraversal  andTraversal = andClause.getGraphTraversal();
+                    andTraversal.and(nestedTraversals.toArray(new Traversal[0]));
+                    nestedTraversals.clear();
+                    nestedTraversals.add(andTraversal);
 
                     // Record all processed attributes
                     gremlinQueryComposer.addProcessedAttributes(andClause.getAttributesProcessed());
@@ -263,16 +307,16 @@ public class DSLVisitor extends AtlasDSLParserBaseVisitor<Void> {
                 prev = OR;
             }
             processExpr(exprRight.compE(), nestedProcessor);
-            nestedQueries.add(nestedProcessor.get());
+            nestedTraversals.add(nestedProcessor.getGraphTraversal());
 
             // Record all processed attributes
             gremlinQueryComposer.addProcessedAttributes(nestedProcessor.getAttributesProcessed());
         }
         if (AND.equalsIgnoreCase(prev)) {
-            gremlinQueryComposer.addAndClauses(nestedQueries);
+            gremlinQueryComposer.addAndClauses(nestedTraversals);
         }
         if (OR.equalsIgnoreCase(prev)) {
-            gremlinQueryComposer.addOrClauses(nestedQueries);
+            gremlinQueryComposer.addOrClauses(nestedTraversals);
         }
     }
 

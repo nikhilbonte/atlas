@@ -28,6 +28,8 @@ import org.apache.atlas.AtlasErrorCode;
 import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.query.antlr4.AtlasDSLLexer;
 import org.apache.atlas.query.antlr4.AtlasDSLParser;
+import org.apache.atlas.repository.graphdb.AtlasGraph;
+import org.apache.atlas.repository.graphdb.AtlasGraphTraversal;
 import org.apache.atlas.type.AtlasTypeRegistry;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -108,30 +110,28 @@ public class AtlasDSL {
 
         private final AtlasDSLParser.QueryContext queryContext;
         private final AtlasTypeRegistry           typeRegistry;
-        private final int                         offset;
-        private final int                         limit;
         private final String                      query;
+        private final AtlasGraph                  graph;
 
-        public Translator(String query, AtlasTypeRegistry typeRegistry, int offset, int limit) throws AtlasBaseException {
+        public Translator(AtlasGraph graph, AtlasTypeRegistry typeRegistry, String query) throws AtlasBaseException {
             this.query = query;
             this.queryContext = Parser.parse(query);
             this.typeRegistry = typeRegistry;
-            this.offset       = offset;
-            this.limit        = limit;
+            this.graph = graph;
         }
 
-        public GremlinQuery translate() throws AtlasBaseException {
+        public GremlinTraversal translate() throws AtlasBaseException {
             QueryMetadata queryMetadata = new QueryMetadata(queryContext);
-            GremlinQueryComposer gremlinQueryComposer = new GremlinQueryComposer(typeRegistry, queryMetadata, limit, offset);
-            DSLVisitor dslVisitor = new DSLVisitor(gremlinQueryComposer);
+            GremlinQueryComposer gremlinQueryComposer = new GremlinQueryComposer(graph.V(), typeRegistry, queryMetadata);
+            DSLVisitor dslVisitor = new DSLVisitor(gremlinQueryComposer, queryMetadata);
 
             queryContext.accept(dslVisitor);
 
             processErrorList(gremlinQueryComposer);
 
-            String gremlinQuery = gremlinQueryComposer.get();
+            AtlasGraphTraversal graphTraversal = gremlinQueryComposer.getGraphTraversal();
 
-            return new GremlinQuery(gremlinQuery, queryMetadata.hasSelect());
+            return new GremlinTraversal(graphTraversal, gremlinQueryComposer.getSelectClause(), queryMetadata);
         }
 
         private void processErrorList(GremlinQueryComposer gremlinQueryComposer) throws AtlasBaseException {
@@ -151,11 +151,26 @@ public class AtlasDSL {
         private boolean hasOrderBy;
         private boolean hasLimitOffset;
 
+        private int resolvedLimit;
+        private int resolvedOffset;
+
         public QueryMetadata(AtlasDSLParser.QueryContext queryContext) {
             hasSelect  = queryContext != null && queryContext.selectClause() != null;
             hasGroupBy = queryContext != null && queryContext.groupByExpression() != null;
             hasOrderBy = queryContext != null && queryContext.orderByExpr() != null;
             hasLimitOffset = queryContext != null && queryContext.limitOffset() != null;
+
+            if (hasLimitOffset) {
+                AtlasDSLParser.LimitOffsetContext  limitOffsetContext = queryContext.limitOffset();
+                AtlasDSLParser.LimitClauseContext  limitClause        = limitOffsetContext.limitClause();
+                AtlasDSLParser.OffsetClauseContext offsetClause       = limitOffsetContext.offsetClause();
+                if (limitClause != null) {
+                    resolvedLimit = Integer.parseInt(limitClause.NUMBER().getText());
+                }
+                if (offsetClause != null) {
+                    resolvedOffset = Integer.parseInt(offsetClause.NUMBER().getText());
+                }
+            }
         }
 
         public boolean hasSelect() {
@@ -176,6 +191,14 @@ public class AtlasDSL {
 
         public boolean needTransformation() {
             return (hasGroupBy && hasSelect && hasOrderBy) || hasSelect;
+        }
+
+        public int getResolvedLimit() {
+            return resolvedLimit;
+        }
+
+        public int getResolvedOffset() {
+            return resolvedOffset;
         }
     }
 }

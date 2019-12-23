@@ -36,6 +36,7 @@ import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.atlas.model.profile.AtlasUserSavedSearch;
 import org.apache.atlas.query.AtlasDSL;
 import org.apache.atlas.query.GremlinQuery;
+import org.apache.atlas.query.GremlinTraversal;
 import org.apache.atlas.query.QueryParams;
 import org.apache.atlas.repository.Constants;
 import org.apache.atlas.repository.graph.GraphBackedSearchIndexer;
@@ -51,6 +52,7 @@ import org.apache.atlas.type.AtlasStructType.AtlasAttribute;
 import org.apache.atlas.util.AtlasGremlinQueryProvider;
 import org.apache.atlas.util.AtlasGremlinQueryProvider.AtlasGremlinQuery;
 import org.apache.atlas.util.SearchPredicateUtil;
+import org.apache.atlas.util.DSLProjectionUtil;
 import org.apache.atlas.util.SearchTracker;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
@@ -83,6 +85,7 @@ public class EntityDiscoveryService implements AtlasDiscoveryService {
     private static final Logger LOG = LoggerFactory.getLogger(EntityDiscoveryService.class);
     private static final String DEFAULT_SORT_ATTRIBUTE_NAME = "name";
     private static final String SORT_ATTRIBUTE_NAME = "sortAttributeName";
+    private static final String DEFAULT_LIMIT_OFFSET_TEMPLATE = " limit %d offset %d";
 
     private final AtlasGraph                      graph;
     private final EntityGraphRetriever            entityRetriever;
@@ -121,56 +124,71 @@ public class EntityDiscoveryService implements AtlasDiscoveryService {
     @GraphTransaction
     public AtlasSearchResult searchUsingDslQuery(String dslQuery, int limit, int offset) throws AtlasBaseException {
         AtlasSearchResult ret          = new AtlasSearchResult(dslQuery, AtlasQueryType.DSL);
-        GremlinQuery      gremlinQuery = toGremlinQuery(dslQuery, limit, offset);
-        String            queryStr     = gremlinQuery.queryStr();
+        GremlinTraversal                            gremlinTraversal  = toGremlinTraversal(dslQuery, limit, offset);
+        AtlasGraphTraversal<AtlasVertex, AtlasEdge> graphTraversal    = gremlinTraversal.getGraphTraversal();
+        String                                      traversalAsString = graphTraversal.toString();
 
         if (LOG.isDebugEnabled()) {
-            LOG.debug("Executing DSL: query={}, gremlinQuery={}", dslQuery, queryStr);
+            LOG.debug("Executing DSL: query={}, gremlinQuery={}", dslQuery, traversalAsString);
         }
+        LOG.info("Executing DSL: query={}, gremlinQuery={}", dslQuery, traversalAsString);
 
-        Object result = graph.executeGremlinScript(queryStr, false);
+        long                                 start      = System.currentTimeMillis();
+        List<AtlasVertex>                    resultList = graphTraversal.getAtlasVertexList();
+        Map<String, Collection<AtlasVertex>> resultMap  = graphTraversal.getAtlasVertexMap();
+        long                                 end        = System.currentTimeMillis();
 
-        if (result instanceof List && CollectionUtils.isNotEmpty((List)result)) {
-            List   queryResult  = (List) result;
-            Object firstElement = queryResult.get(0);
+        LOG.info("Execution took {} msecs.", end - start);
+        LOG.info("Result: list = {}, map = {}", resultList.size(), resultMap.size());
 
-            if (firstElement instanceof AtlasVertex) {
-                for (Object element : queryResult) {
-                    if (element instanceof AtlasVertex) {
-                        ret.addEntity(entityRetriever.toAtlasEntityHeaderWithClassifications((AtlasVertex)element));
-                    } else {
-                        LOG.warn("searchUsingDslQuery({}): expected an AtlasVertex; found unexpected entry in result {}", dslQuery, element);
-                    }
-                }
-            } else if (gremlinQuery.hasSelectList()) {
-                ret.setAttributes(toAttributesResult(queryResult, gremlinQuery));
-            } else if (firstElement instanceof Map) {
-                for (Object element : queryResult) {
-                    if (element instanceof Map) {
-                        Map map = (Map)element;
-
-                        for (Object key : map.keySet()) {
-                            Object value = map.get(key);
-
-                            if (value instanceof List && CollectionUtils.isNotEmpty((List)value)) {
-                                for (Object o : (List) value) {
-                                    Object entry = o;
-                                    if (entry instanceof AtlasVertex) {
-                                        ret.addEntity(entityRetriever.toAtlasEntityHeader((AtlasVertex) entry));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        if (CollectionUtils.isNotEmpty(resultList)) {
+            if (gremlinTraversal.hasValidSelectClause()) {
+                ret = DSLProjectionUtil.createProjection(gremlinTraversal, entityRetriever, resultList);
             } else {
-                LOG.warn("searchUsingDslQuery({}/{}): found unexpected entry in result {}", dslQuery, dslQuery, gremlinQuery.queryStr());
+                processVertices(ret, resultList);
+            }
+        } else if (MapUtils.isNotEmpty(resultMap)) {
+            if (gremlinTraversal.hasValidSelectClause()) {
+                ret = DSLProjectionUtil.createProjection(gremlinTraversal, entityRetriever, resultMap);
+            } else {
+                for (Collection<AtlasVertex> vertices : resultMap.values()) {
+                    processVertices(ret, vertices, gremlinTraversal.getQueryMetadata().getResolvedOffset(), gremlinTraversal.getQueryMetadata().getResolvedLimit());
+                }
             }
         }
 
         scrubSearchResults(ret);
 
         return ret;
+    }
+
+    private void processVertices(final AtlasSearchResult ret, final Collection<AtlasVertex> vertices) throws AtlasBaseException {
+        for (AtlasVertex vertex : vertices) {
+            if (vertex != null) {
+                ret.addEntity(entityRetriever.toAtlasEntityHeaderWithClassifications(vertex));
+            }
+        }
+    }
+
+    private void processVertices(final AtlasSearchResult ret, final Collection<AtlasVertex> vertices, int offset, int limit) throws AtlasBaseException {
+        Collection<AtlasVertex> subCollection = new ArrayList<>();
+        int idx = 0;
+        for (AtlasVertex vertex : vertices) {
+            if (idx < offset) {
+                idx++;
+                continue;
+            }
+
+            if (idx >= offset + limit) {
+                break;
+           }
+
+            subCollection.add(vertex);
+            idx++;
+        }
+
+        // Only process the smaller subset of vertices
+        processVertices(ret, subCollection);
     }
 
     @Override
@@ -764,84 +782,25 @@ public class EntityDiscoveryService implements AtlasDiscoveryService {
         return ret;
     }
 
-    private GremlinQuery toGremlinQuery(String query, int limit, int offset) throws AtlasBaseException {
+    private GremlinTraversal toGremlinTraversal(String query, int limit, int offset) throws AtlasBaseException {
         QueryParams                 params       = QueryParams.getNormalizedParams(limit, offset);
-        GremlinQuery                gremlinQuery = new AtlasDSL.Translator(query, typeRegistry, params.offset(), params.limit()).translate();
+        //GremlinQuery                gremlinQuery = new AtlasDSL.Translator(query, typeRegistry, params.offset(), params.limit()).translate();
 
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Translated Gremlin Query: {}", gremlinQuery.queryStr());
+        // Add default limit and offset (if both are missing)
+        if (!query.contains("limit") && !query.contains("offset")) {
+            query += String.format(DEFAULT_LIMIT_OFFSET_TEMPLATE, params.limit(), params.offset());
         }
 
-        return gremlinQuery;
+        if (query.contains("limit") && !query.contains("offset")) {
+            query += " offset 0";
+        }
+
+        return new AtlasDSL.Translator(graph, typeRegistry, query).translate();
     }
 
     private AtlasIndexQuery toAtlasIndexQuery(String fullTextQuery) {
         String graphQuery = String.format(indexSearchPrefix + "\"%s\":(%s)", Constants.ENTITY_TEXT_PROPERTY_KEY, fullTextQuery);
         return graph.indexQuery(Constants.FULLTEXT_INDEX, graphQuery);
-    }
-
-    private AttributeSearchResult toAttributesResult(List results, GremlinQuery query) {
-        AttributeSearchResult ret = new AttributeSearchResult();
-        List<String> names = (List<String>) results.get(0);
-        List<List<Object>> values = extractValues(results.subList(1, results.size()));
-
-        ret.setName(names);
-        ret.setValues(values);
-        return ret;
-    }
-
-    private List<String> extractNames(List results) {
-        List<String> names = new ArrayList<>();
-        for (Object obj : results) {
-            if (obj instanceof Map) {
-                Map map = (Map) obj;
-                if (MapUtils.isNotEmpty(map)) {
-                    for (Object key : map.keySet()) {
-                        names.add((String) key);
-                    }
-                    return names;
-                }
-            } else if (obj instanceof List) {
-                List list = (List) obj;
-                if (CollectionUtils.isNotEmpty(list)) {
-                    for(Object o : list) {
-                        names.add((String) o);
-                    }
-                }
-            }
-        }
-
-        return names;
-    }
-
-    private List<List<Object>> extractValues(List results) {
-        List<List<Object>> values = new ArrayList<>();
-
-        for (Object obj : results) {
-            if (obj instanceof Map) {
-                Map map = (Map) obj;
-                List<Object> list = new ArrayList<>();
-                if (MapUtils.isNotEmpty(map)) {
-                    for (Object key : map.keySet()) {
-                       Object vals = map.get(key);
-                       if(vals instanceof List) {
-                           List l = (List) vals;
-                           list.addAll(l);
-                       }
-
-                    }
-
-                    values.add(list);
-                }
-            } else if (obj instanceof List) {
-                List list = (List) obj;
-                if (CollectionUtils.isNotEmpty(list)) {
-                    values.add(list);
-                }
-            }
-        }
-
-        return values;
     }
 
     private boolean skipDeletedEntities(boolean excludeDeletedEntities, AtlasVertex<?, ?> vertex) {

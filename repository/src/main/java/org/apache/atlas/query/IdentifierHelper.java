@@ -25,6 +25,7 @@ import org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdg
 import org.apache.atlas.type.AtlasType;
 import org.apache.commons.lang.StringUtils;
 
+import java.util.Collection;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -54,7 +55,7 @@ public class IdentifierHelper {
     }
 
     public static Info create(GremlinQueryComposer.Context context,
-                              org.apache.atlas.query.Lookup lookup,
+                              Lookup lookup,
                               String identifier) {
         Info idInfo = new Info(identifier);
         idInfo.update(lookup, context);
@@ -66,7 +67,7 @@ public class IdentifierHelper {
         return m.find() ? m.group(1) : s;
     }
 
-    public static String getQualifiedName(org.apache.atlas.query.Lookup lookup,
+    public static String getQualifiedName(Lookup lookup,
                                           GremlinQueryComposer.Context context,
                                           String name) {
         try {
@@ -131,7 +132,8 @@ public class IdentifierHelper {
         private String   edgeLabel;
         private boolean  introduceType;
         private boolean  hasSubtypes;
-        private String   subTypes;
+        private String   subTypesStr;
+        private Collection<String> subTypes;
         private boolean  isTrait;
         private boolean  newContext;
         private boolean  isAttribute;
@@ -144,7 +146,7 @@ public class IdentifierHelper {
             this.actual = IdentifierHelper.get(raw);
         }
 
-        private void update(org.apache.atlas.query.Lookup lookup, GremlinQueryComposer.Context context) {
+        private void update(Lookup lookup, GremlinQueryComposer.Context context) {
             try {
                 newContext = context.isEmpty();
                 if (!newContext) {
@@ -155,7 +157,7 @@ public class IdentifierHelper {
                     updateTypeInfo(lookup, context);
                     setIsTrait(context, lookup, attributeName);
                     updateEdgeInfo(lookup, context);
-                    introduceType = !isPrimitive() && !context.hasAlias(parts[0]);
+                    introduceType =  isAttribute && !isPrimitive && !context.hasAlias(parts[0]);
                     updateSubTypes(lookup, context);
                 }
             } catch (NullPointerException ex) {
@@ -168,7 +170,7 @@ public class IdentifierHelper {
             isTrait = lookup.isTraitType(s);
         }
 
-        private void updateSubTypes(org.apache.atlas.query.Lookup lookup, GremlinQueryComposer.Context context) {
+        private void updateSubTypes(Lookup lookup, GremlinQueryComposer.Context context) {
             if (isTrait) {
                 return;
             }
@@ -176,10 +178,11 @@ public class IdentifierHelper {
             hasSubtypes = lookup.doesTypeHaveSubTypes(context);
             if (hasSubtypes) {
                 subTypes = lookup.getTypeAndSubTypes(context);
+                subTypesStr = lookup.getTypeAndSubTypesAsStr(context);
             }
         }
 
-        private void updateEdgeInfo(org.apache.atlas.query.Lookup lookup, GremlinQueryComposer.Context context) {
+        private void updateEdgeInfo(Lookup lookup, GremlinQueryComposer.Context context) {
             if (!isPrimitive && !isTrait && typeName != attributeName) {
                 edgeDirection = lookup.getRelationshipEdgeDirection(context, attributeName);
                 edgeLabel = lookup.getRelationshipEdgeLabel(context, attributeName);
@@ -231,7 +234,7 @@ public class IdentifierHelper {
         }
         private String getDefaultQualifiedNameForSinglePartName(GremlinQueryComposer.Context context, String s) {
             String qn = context.getTypeNameFromAlias(s);
-            if (StringUtils.isEmpty(qn) && SelectClauseComposer.isKeyword(s)) {
+            if (StringUtils.isEmpty(qn) && SelectClauseMetadata.isKeyword(s)) {
                 return s;
             }
 
@@ -300,8 +303,12 @@ public class IdentifierHelper {
             return hasSubtypes;
         }
 
-        public String getSubTypes() {
+        public Collection<String> getSubTypes() {
             return subTypes;
+        }
+
+        public String getSubTypesAsStr() {
+            return subTypesStr;
         }
 
         public String get() {

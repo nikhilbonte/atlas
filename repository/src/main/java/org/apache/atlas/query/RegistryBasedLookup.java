@@ -24,8 +24,24 @@ import org.apache.atlas.model.typedef.AtlasBaseTypeDef;
 import org.apache.atlas.type.*;
 import org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdgeDirection;
 import org.apache.commons.lang.StringUtils;
+import org.apache.atlas.repository.Constants;
+import org.apache.atlas.type.AtlasArrayType;
+import org.apache.atlas.type.AtlasBuiltInTypes;
+import org.apache.atlas.type.AtlasEntityType;
+import org.apache.atlas.type.AtlasMapType;
+import org.apache.atlas.type.AtlasStructType;
+import org.apache.atlas.type.AtlasType;
+import org.apache.atlas.type.AtlasTypeRegistry;
+import org.apache.commons.collections.CollectionUtils;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.apache.atlas.discovery.SearchContext.MATCH_ALL_CLASSIFIED;
 import static org.apache.atlas.discovery.SearchContext.MATCH_ALL_NOT_CLASSIFIED;
@@ -150,8 +166,9 @@ class RegistryBasedLookup implements Lookup {
     }
 
     @Override
-    public String getTypeAndSubTypes(GremlinQueryComposer.Context context) {
-        String[] str = context.getActiveEntityType() != null ?
+    public Collection<String> getTypeAndSubTypes(GremlinQueryComposer.Context context) {
+        return context.getActiveEntityType() != null ? context.getActiveEntityType().getTypeAndAllSubTypes() : Collections.emptyList();
+        /*String[] str = context.getActiveEntityType() != null ?
                         context.getActiveEntityType().getTypeAndAllSubTypes().toArray(new String[]{}) :
                         new String[]{};
         if(str.length == 0) {
@@ -163,7 +180,18 @@ class RegistryBasedLookup implements Lookup {
             quoted[i] = IdentifierHelper.getQuoted(str[i]);
         }
 
-        return StringUtils.join(quoted, ",");
+        return StringUtils.join(quoted, ",");*/
+    }
+
+    @Override
+    public String getTypeAndSubTypesAsStr(final GremlinQueryComposer.Context context) {
+        Collection<String> typeAndSubTypes = getTypeAndSubTypes(context);
+        String ret = null;
+        if (CollectionUtils.isNotEmpty(typeAndSubTypes)) {
+            ret = String.join(",", typeAndSubTypes.stream().map(IdentifierHelper::getQuoted).collect(Collectors.toList()));
+        }
+
+        return ret;
     }
 
     @Override

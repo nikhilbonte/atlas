@@ -59,7 +59,7 @@ public class DSLQueriesTest extends BasicTestSetup {
 
         setupTestData();
 
-        pollForData();
+        //pollForData();
     }
 
     private void pollForData() throws InterruptedException {
@@ -189,7 +189,7 @@ public class DSLQueriesTest extends BasicTestSetup {
         };
     }
 
-    @Test(dataProvider = "comparisonQueriesProvider")
+    //@Test(dataProvider = "comparisonQueriesProvider")
     public void comparison(String query, int expected) throws AtlasBaseException {
         LOG.debug(query);
         AtlasSearchResult searchResult = discoveryService.searchUsingDslQuery(query, DEFAULT_LIMIT, 0);
