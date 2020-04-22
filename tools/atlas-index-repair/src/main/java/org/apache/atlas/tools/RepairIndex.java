@@ -144,7 +144,8 @@ public class RepairIndex {
 
             ManagementSystem mgmt = (ManagementSystem) graph.openManagement();
             JanusGraphIndex index = mgmt.getGraphIndex(indexName);
-            mgmt.updateIndex(index, SchemaAction.REINDEX).get();
+            MapReduceIndexManagement mr = new MapReduceIndexManagement(graph)
+            mr.updateIndex(index, SchemaAction.REINDEX).get();
             mgmt.commit();
 
             ManagementSystem.awaitGraphIndexStatus(graph, indexName).status(SchemaStatus.ENABLED).call();
