@@ -18,10 +18,7 @@
 package org.apache.atlas.repository.store.graph.v2;
 
 
-import org.apache.atlas.AtlasConfiguration;
-import org.apache.atlas.AtlasErrorCode;
-import org.apache.atlas.GraphTransactionInterceptor;
-import org.apache.atlas.RequestContext;
+import org.apache.atlas.*;
 import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.model.TimeBoundary;
 import org.apache.atlas.model.TypeCategory;
@@ -78,8 +75,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import static org.apache.atlas.AtlasConfiguration.CLASSIFICATION_NOTIFICATION_ENABLED_STATES;
 import static org.apache.atlas.AtlasConfiguration.LABEL_MAX_LENGTH;
 import static org.apache.atlas.model.TypeCategory.CLASSIFICATION;
+import static org.apache.atlas.model.instance.AtlasClassification.Status.*;
 import static org.apache.atlas.model.instance.AtlasEntity.Status.ACTIVE;
 import static org.apache.atlas.model.instance.AtlasEntity.Status.DELETED;
 import static org.apache.atlas.model.instance.AtlasRelatedObjectId.KEY_RELATIONSHIP_ATTRIBUTES;
@@ -105,8 +104,7 @@ import static org.apache.atlas.repository.graph.GraphHelper.isPropagationEnabled
 import static org.apache.atlas.repository.graph.GraphHelper.isRelationshipEdge;
 import static org.apache.atlas.repository.graph.GraphHelper.string;
 import static org.apache.atlas.repository.graph.GraphHelper.updateModificationMetadata;
-import static org.apache.atlas.repository.store.graph.v2.AtlasGraphUtilsV2.getIdFromVertex;
-import static org.apache.atlas.repository.store.graph.v2.AtlasGraphUtilsV2.isReference;
+import static org.apache.atlas.repository.store.graph.v2.AtlasGraphUtilsV2.*;
 import static org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdgeDirection.IN;
 import static org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdgeDirection.OUT;
 
@@ -606,6 +604,7 @@ public class EntityGraphMapper {
         AtlasGraphUtilsV2.addEncodedProperty(ret, SUPER_TYPES_PROPERTY_KEY, classificationType.getAllSuperTypes());
         AtlasGraphUtilsV2.setEncodedProperty(ret, CLASSIFICATION_ENTITY_GUID, classification.getEntityGuid());
         AtlasGraphUtilsV2.setEncodedProperty(ret, CLASSIFICATION_ENTITY_STATUS, classification.getEntityStatus().name());
+        AtlasGraphUtilsV2.setEncodedProperty(ret, CLASSIFICATION_STATUS_KEY, classification.getStatus().name());
 
         return ret;
     }
@@ -1933,6 +1932,13 @@ public class EntityGraphMapper {
 
                 addToClassificationNames(entityVertex, classificationName);
 
+                //verify classification status, default - APPROVED
+                if (classification.getStatus() == null) {
+                    classification.setStatus(APPROVED);
+                } else if (classification.getStatus() == REJECTED) {
+                    throw new AtlasBaseException(AtlasErrorCode.INVALID_CLASSIFICATION_STATUS, "create", REJECTED.name());
+                }
+
                 // add a new AtlasVertex for the struct or trait instance
                 AtlasVertex classificationVertex = createClassificationVertex(classification);
 
@@ -2247,6 +2253,24 @@ public class EntityGraphMapper {
                 isClassificationUpdated = true;
             }
 
+            // check for status update
+            AtlasClassification.Status currentStatus = currentClassification.getStatus();
+            if (currentStatus == null){
+                currentStatus = APPROVED; //for backward compatibility
+            }
+
+            AtlasClassification.Status updatedStatus = classification.getStatus();
+            if (updatedStatus == null){
+                throw new AtlasBaseException(AtlasErrorCode.INVALID_CLASSIFICATION_STATUS, "update", null);
+            }
+
+            if(isValidStatusUpdate(currentStatus, updatedStatus)) {
+                AtlasGraphUtilsV2.setEncodedProperty(classificationVertex, CLASSIFICATION_STATUS_KEY, updatedStatus);
+                currentClassification.setStatus(updatedStatus);
+
+                //isClassificationUpdated = true; //TODO: TBD: enable if notifications for propagated entities are needed
+            }
+
             if (isClassificationUpdated) {
                 List<AtlasVertex> propagatedEntityVertices = graphHelper.getAllPropagatedEntityVertices(classificationVertex);
 
@@ -2335,6 +2359,22 @@ public class EntityGraphMapper {
         }
 
         AtlasPerfTracer.log(perf);
+    }
+
+    private boolean isValidStatusUpdate(AtlasClassification.Status currentStatus, AtlasClassification.Status updatedStatus) throws AtlasBaseException {
+        boolean ret = false;
+
+        if (currentStatus == updatedStatus) {
+            return false;
+        }
+
+        if (currentStatus == SUGGESTED ) {
+            ret = true;
+        } else {
+            throw new AtlasBaseException(AtlasErrorCode.INVALID_CLASSIFICATION_STATUS_UPDATE, currentStatus.name(), updatedStatus.name());
+        }
+
+        return ret;
     }
 
     private AtlasEdge mapClassification(EntityOperation operation,  final EntityMutationContext context, AtlasClassification classification,

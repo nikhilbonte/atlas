@@ -85,6 +85,8 @@ import java.util.Objects;
 import java.util.Set;
 
 import static java.lang.Boolean.FALSE;
+import static org.apache.atlas.AtlasConfiguration.CLASSIFICATION_NOTIFICATION_ENABLED_STATES;
+import static org.apache.atlas.AtlasConfiguration.NOTIFICATION_RELATIONSHIPS_ENABLED;
 import static org.apache.atlas.model.instance.EntityMutations.EntityOperation.DELETE;
 import static org.apache.atlas.model.instance.EntityMutations.EntityOperation.PURGE;
 import static org.apache.atlas.model.instance.EntityMutations.EntityOperation.UPDATE;

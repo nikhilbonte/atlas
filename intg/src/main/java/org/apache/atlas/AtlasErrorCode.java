@@ -128,6 +128,8 @@ public enum AtlasErrorCode {
     CLASSIFICATION_NOT_ASSOCIATED_WITH_ENTITY(400, "ATLAS-400-00-06D", "Classification {0} is not associated with entity"),
     UNKNOWN_GLOSSARY_TERM(400, "ATLAS-400-00-06E", "{0}: Unknown/invalid glossary term"),
     INVALID_CLASSIFICATION_PARAMS(400, "ATLAS-400-00-06F", "Invalid classification parameters passed for {0} operation for entity: {1}"),
+    INVALID_CLASSIFICATION_STATUS(400, "ATLAS-400-00-06G", "Invalid classification status passed for {0} classification: {1}"),
+    INVALID_CLASSIFICATION_STATUS_UPDATE(400, "ATLAS-400-00-06H", "Invalid classification status update from {0} to {1}"),
     PROPAGATED_CLASSIFICATION_NOT_ASSOCIATED_WITH_ENTITY(400, "ATLAS-400-00-070", "Propagated classification {0} is not associated with entity {2}, it is associated with entity {1}"),
     INVALID_BLOCKED_PROPAGATED_CLASSIFICATION(400, "ATLAS-400-00-071", "Invalid propagated classification: {0} with entityGuid: {1} added to blocked propagated classifications."),
     MISSING_MANDATORY_ANCHOR(400, "ATLAS-400-00-072", "Mandatory anchor attribute is missing"),

@@ -18,6 +18,7 @@
 
 package org.apache.atlas;
 
+import org.apache.atlas.model.instance.AtlasClassification;
 import org.apache.commons.configuration.Configuration;
 import org.apache.commons.lang.StringUtils;
 
@@ -57,6 +58,7 @@ public enum AtlasConfiguration {
     ENTITY_CHANGE_NOTIFY_IGNORE_RELATIONSHIP_ATTRIBUTES("atlas.entity.change.notify.ignore.relationship.attributes", true),
 
     CLASSIFICATION_PROPAGATION_DEFAULT("atlas.classification.propagation.default", true),
+    CLASSIFICATION_NOTIFICATION_ENABLED_STATES("atlas.classification.notification.allowed.states", AtlasClassification.Status.APPROVED),
 
     //search configuration
     SEARCH_MAX_LIMIT("atlas.search.maxlimit", 10000),

@@ -43,13 +43,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import javax.inject.Inject;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
+import static org.apache.atlas.AtlasConfiguration.CLASSIFICATION_NOTIFICATION_ENABLED_STATES;
 import static org.apache.atlas.model.notification.EntityNotification.EntityNotificationV2.OperationType.CLASSIFICATION_ADD;
 import static org.apache.atlas.model.notification.EntityNotification.EntityNotificationV2.OperationType.CLASSIFICATION_DELETE;
 import static org.apache.atlas.model.notification.EntityNotification.EntityNotificationV2.OperationType.CLASSIFICATION_UPDATE;
@@ -72,6 +68,7 @@ public class EntityNotificationListenerV2 implements EntityChangeListenerV2 {
 
     private final AtlasTypeRegistry                              typeRegistry;
     private final EntityNotificationSender<EntityNotificationV2> notificationSender;
+    private List<String> allowedStates;
 
     @Inject
     public EntityNotificationListenerV2(AtlasTypeRegistry typeRegistry,
@@ -79,6 +76,20 @@ public class EntityNotificationListenerV2 implements EntityChangeListenerV2 {
                                         Configuration configuration) {
         this.typeRegistry       = typeRegistry;
         this.notificationSender = new EntityNotificationSender<>(notificationInterface, configuration);
+        initAllowedStates();
+    }
+
+    private void initAllowedStates() {
+        String[] allowedStatesArray = CLASSIFICATION_NOTIFICATION_ENABLED_STATES.getStringArray();
+        if (allowedStatesArray[0].equals("*")){
+            allowedStates = new ArrayList<>();
+            allowedStates.add(AtlasClassification.Status.SUGGESTED.name());
+            allowedStates.add(AtlasClassification.Status.APPROVED.name());
+            allowedStates.add(AtlasClassification.Status.REJECTED.name());
+        } else {
+            allowedStates = Arrays.asList(allowedStatesArray);
+        }
+        LOG.info("allowedStates {}", allowedStates.toArray());
     }
 
     @Override
@@ -103,33 +114,61 @@ public class EntityNotificationListenerV2 implements EntityChangeListenerV2 {
 
     @Override
     public void onClassificationsAdded(AtlasEntity entity, List<AtlasClassification> classifications) throws AtlasBaseException {
+        //todo: check which callee sends multiple classifications
+        LOG.info("onClassificationsAdded classifications.size - {}", classifications.size());
         notifyEntityEvents(Collections.singletonList(entity), CLASSIFICATION_ADD);
     }
 
     @Override
     public void onClassificationsAdded(List<AtlasEntity> entities, List<AtlasClassification> classifications) throws AtlasBaseException {
-        notifyEntityEvents(entities, CLASSIFICATION_ADD);
+        LOG.info("onClassificationsAdded entities.size - {}, classifications.size - {}", entities.size(), classifications.size());
+
+        boolean notify = false;
+        for (AtlasClassification classification : classifications){
+            notify = notifyClassificationEvent(classification.getStatus());
+        }
+
+        if (notify) {
+            notifyEntityEvents(entities, CLASSIFICATION_ADD);
+        }
     }
 
     @Override
     public void onClassificationsUpdated(AtlasEntity entity, List<AtlasClassification> classifications) throws AtlasBaseException {
-        Map<String, List<AtlasClassification>> addedPropagations   = RequestContext.get().getAddedPropagations();
-        Map<String, List<AtlasClassification>> removedPropagations = RequestContext.get().getRemovedPropagations();
+        //todo:
+        LOG.info("onClassificationsUpdated classifications.size - {}", classifications.size());
 
-        if (addedPropagations.containsKey(entity.getGuid())) {
-            notifyEntityEvents(Collections.singletonList(entity), CLASSIFICATION_ADD);
-        } else if (!removedPropagations.containsKey(entity.getGuid())) {
-            notifyEntityEvents(Collections.singletonList(entity), CLASSIFICATION_UPDATE);
+        boolean notify = false;
+        for (AtlasClassification classification : classifications){
+            if (notifyClassificationEvent(classification.getStatus())) {
+                notify = true;
+                break;
+            }
+        }
+
+        if (notify) {
+            Map<String, List<AtlasClassification>> addedPropagations   = RequestContext.get().getAddedPropagations();
+            Map<String, List<AtlasClassification>> removedPropagations = RequestContext.get().getRemovedPropagations();
+
+            if (addedPropagations.containsKey(entity.getGuid())) {
+                notifyEntityEvents(Collections.singletonList(entity), CLASSIFICATION_ADD);
+            } else if (!removedPropagations.containsKey(entity.getGuid())) {
+                notifyEntityEvents(Collections.singletonList(entity), CLASSIFICATION_UPDATE);
+            }
         }
     }
 
     @Override
     public void onClassificationsDeleted(AtlasEntity entity, List<AtlasClassification> classifications) throws AtlasBaseException {
+        //todo:
+        LOG.info("onClassificationsDeleted classifications.size - {}", classifications.size());
         notifyEntityEvents(Collections.singletonList(entity), CLASSIFICATION_DELETE);
     }
 
     @Override
     public void onClassificationsDeleted(List<AtlasEntity> entities, List<AtlasClassification> classifications) throws AtlasBaseException {
+        //todo:
+        LOG.info("onClassificationsDeleted entities.size - {}, classifications.size - {}", entities.size(), classifications.size());
         notifyEntityEvents(entities, CLASSIFICATION_DELETE);
     }
 
@@ -320,5 +359,9 @@ public class EntityNotificationListenerV2 implements EntityChangeListenerV2 {
     @Override
     public void onBusinessAttributesUpdated(AtlasEntity entity, Map<String, Map<String, Object>> updatedBusinessAttributes) throws AtlasBaseException{
         // do nothing -> notification not sent out for business metadata attribute updation from entities
+    }
+
+    private boolean notifyClassificationEvent(AtlasClassification.Status classificationStatus) {
+        return allowedStates.contains(classificationStatus.name());
     }
 }

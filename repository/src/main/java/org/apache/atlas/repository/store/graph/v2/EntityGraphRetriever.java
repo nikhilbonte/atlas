@@ -335,6 +335,7 @@ public class EntityGraphRetriever {
             ret.setEntityStatus(getClassificationEntityStatus(classificationVertex));
             ret.setPropagate(isPropagationEnabled(classificationVertex));
             ret.setRemovePropagationsOnEntityDelete(getRemovePropagations(classificationVertex));
+            ret.setStatus(getClassificationStatus(classificationVertex));
 
             String strValidityPeriods = AtlasGraphUtilsV2.getEncodedProperty(classificationVertex, CLASSIFICATION_VALIDITY_PERIODS_KEY, String.class);
 

@@ -175,6 +175,7 @@ public final class Constants {
 
     public static final String CLASSIFICATION_ENTITY_GUID                     = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "entityGuid");
     public static final String CLASSIFICATION_ENTITY_STATUS                   = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "entityStatus");
+    public static final String CLASSIFICATION_STATUS_KEY                      = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "status");
     public static final String CLASSIFICATION_VALIDITY_PERIODS_KEY            = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "validityPeriods");
     public static final String CLASSIFICATION_VERTEX_PROPAGATE_KEY            = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "propagate");
     public static final String CLASSIFICATION_VERTEX_REMOVE_PROPAGATIONS_KEY  = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "removePropagations");

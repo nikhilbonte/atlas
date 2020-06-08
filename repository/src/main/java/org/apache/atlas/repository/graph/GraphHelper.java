@@ -26,11 +26,8 @@ import org.apache.atlas.AtlasErrorCode;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.RequestContext;
 import org.apache.atlas.exception.AtlasBaseException;
-import org.apache.atlas.model.instance.AtlasEntity;
+import org.apache.atlas.model.instance.*;
 import org.apache.atlas.model.instance.AtlasEntity.Status;
-import org.apache.atlas.model.instance.AtlasEntityHeader;
-import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.atlas.model.instance.AtlasRelationship;
 import org.apache.atlas.repository.graphdb.AtlasVertexQuery;
 import org.apache.atlas.repository.store.graph.v2.AtlasGraphUtilsV2;
 import org.apache.atlas.type.AtlasArrayType;
@@ -942,6 +939,12 @@ public final class GraphHelper {
         String status = element.getProperty(CLASSIFICATION_ENTITY_STATUS, String.class);
 
         return (status == null) ? null : Status.valueOf(status);
+    }
+
+    public static AtlasClassification.Status getClassificationStatus(AtlasElement element) {
+        String status = element.getProperty(CLASSIFICATION_STATUS_KEY, String.class);
+
+        return (status == null) ? null : AtlasClassification.Status.valueOf(status);
     }
 
     //Added conditions in fetching system attributes to handle test failures in GremlinTest where these properties are not set
